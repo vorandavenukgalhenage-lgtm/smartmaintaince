@@ -16,17 +16,20 @@ Everything is simulated, there is no real hardware. But it is built and deployed
 flowchart TD
     SIM["Machine Simulators<br/>vibration, temperature, current"]
     IOT["AWS IoT Core<br/>MQTT over TLS"]
+    NR["Node-RED<br/>filter and aggregate"]
     MS["Microservices on Lambda<br/>Anomaly Detection, Alerting,<br/>Work Order, Historian"]
     DDB[("DynamoDB")]
     DASH["Dashboard<br/>hosted on S3"]
 
     SIM --> IOT
+    IOT --> NR
+    NR --> IOT
     IOT --> MS
     MS --> DDB
     DDB --> DASH
 ```
 
-Simulators publish readings to IoT Core. IoT Core routes those readings to the Lambda functions. The anomaly detection function checks each reading against a rolling baseline and, if something looks wrong, publishes an event back onto IoT Core. The alerting, work order and historian functions all pick that event up independently and do their own job. Everything gets written to DynamoDB, and the dashboard just reads from there.
+Simulators publish raw readings to IoT Core. Node-RED is connected to IoT Core as well, it picks up those raw readings, filters and aggregates them, and publishes the result back to IoT Core on a different topic. IoT Core rules route that processed topic to the anomaly detection and historian Lambdas. The anomaly detection function checks each reading against a rolling baseline and, if something looks wrong, publishes an event to a third topic. The alerting, work order and historian functions all pick that event up independently and do their own job. Everything gets written to DynamoDB, and the dashboard just reads from there.
 
 ## Folders
 
@@ -40,6 +43,8 @@ lambda
   dashboard api        read only API the dashboard calls
 dashboard
   index.html           the dashboard page, hosted on S3
+node-red
+  ingestion-flow.json   exported Node-RED flow, filters and aggregates readings
 ```
 
 ## Running the simulator
@@ -63,9 +68,11 @@ Data lives in five DynamoDB tables, Alerts, WorkOrders, Baselines, SensorReading
 
 I originally planned two databases, DynamoDB for sensor data and a relational database for structured records. My tutor suggested simplifying that down to one database, so I moved to DynamoDB only. It ended up fitting the high write volume, low relational integrity story from my proposal even better than I expected.
 
-I also planned a separate Node RED layer to filter and aggregate readings before anomaly detection. In the end I folded that logic straight into the anomaly detection Lambda instead. It does the same job with one less service to deploy and secure.
+Node RED still does the filtering and aggregation step I planned for it, it runs locally and sits between the simulators and the Lambda functions, taking the raw readings off IoT Core and republishing a cleaned up version that the anomaly detection Lambda actually listens to. I did think about folding that logic into the Lambda too, but decided to keep it in Node RED since that is the tool built for this kind of flow based processing and it kept the Lambda focused on just the anomaly logic.
 
 On the security side, TLS is enforced everywhere by default since IoT Core and API Gateway do not allow anything else. I looked into Secrets Manager but did not actually need it, nothing in this system uses a password or API key, it is all IAM roles and certificates. I thought about putting the Lambdas in a VPC too but decided against it. I did not want to spend AWS Academy lab credits on a NAT Gateway for something that does not really need network level segmentation when everything is already serverless and authenticated through IAM anyway.
+
+While tightening the IoT policy down to least privilege, I accidentally removed the Subscribe and Receive permission Node RED needed, since it shares a certificate with the simulator. Found it through the CloudWatch IoT logs, which showed the exact authorization failure, and fixed it by adding Subscribe and Receive back for the Node RED client. Good reminder that a security change can break something else if you are not careful.
 
 ## Testing
 
