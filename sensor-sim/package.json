@@ -1,0 +1,13 @@
+{
+  "name": "smartmaintain-sensor-simulator",
+  "version": "1.0.0",
+  "description": "Node.js machine sensor simulator for SmartMaintaince IoT project",
+  "main": "simulator.js",
+  "scripts": {
+    "start": "node simulator.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mqtt": "^5.7.0"
+  }
+}

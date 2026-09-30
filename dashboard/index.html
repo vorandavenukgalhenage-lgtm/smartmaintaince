@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartMaintaince Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1720;
+    --panel: #17212b;
+    --panel-border: #26333f;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --healthy: #2ea043;
+    --warning: #d29922;
+    --critical: #f85149;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    padding: 24px;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  h1 { font-size: 22px; margin: 0; }
+  .subtitle { color: var(--muted); font-size: 13px; }
+  #last-updated { color: var(--muted); font-size: 12px; }
+
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .stat-tile {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .stat-tile .label { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-tile .value { font-size: 28px; font-weight: 600; margin-top: 4px; }
+  .stat-tile.critical .value { color: var(--critical); }
+  .stat-tile.warning .value { color: var(--warning); }
+
+  .machines-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .machine-card {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px;
+    border-left: 4px solid var(--muted);
+  }
+  .machine-card.healthy { border-left-color: var(--healthy); }
+  .machine-card.warning { border-left-color: var(--warning); }
+  .machine-card.critical { border-left-color: var(--critical); }
+  .machine-card .machine-id { font-size: 16px; font-weight: 600; }
+  .status-pill {
+    display: inline-block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    padding: 2px 8px;
+    border-radius: 999px;
+    margin-top: 6px;
+  }
+  .status-pill.healthy { background: rgba(46,160,67,0.15); color: var(--healthy); }
+  .status-pill.warning { background: rgba(210,153,34,0.15); color: var(--warning); }
+  .status-pill.critical { background: rgba(248,81,73,0.15); color: var(--critical); }
+  .machine-card .detail { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+  section { margin-bottom: 28px; }
+  h2 { font-size: 15px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 10px; }
+
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--panel-border); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 10px 12px; font-size: 13px; border-bottom: 1px solid var(--panel-border); }
+  th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.04em; }
+  tr:last-child td { border-bottom: none; }
+  .sev-high { color: var(--critical); font-weight: 600; }
+  .sev-medium { color: var(--warning); }
+  .table-wrap { max-height: 360px; overflow-y: auto; border-radius: 10px; }
+
+  #error-banner {
+    display: none;
+    background: rgba(248,81,73,0.12);
+    border: 1px solid var(--critical);
+    color: var(--critical);
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>SmartMaintaince — Live Dashboard</h1>
+    <div class="subtitle">Condition-based maintenance monitoring, updated every 10 seconds</div>
+  </div>
+  <div id="last-updated">Loading...</div>
+</header>
+
+<div id="error-banner"></div>
+
+<div class="summary-grid" id="summary-grid"></div>
+
+<section>
+  <h2>Machines</h2>
+  <div class="machines-grid" id="machines-grid"></div>
+</section>
+
+<section>
+  <h2>Recent Alerts</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Machine</th><th>Severity</th><th>Description</th><th>Status</th></tr>
+      </thead>
+      <tbody id="alerts-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h2>Recent Work Orders</h2>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Machine</th><th>Sensor</th><th>Reason</th><th>Assigned To</th><th>Status</th></tr>
+      </thead>
+      <tbody id="workorders-body"></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+  const API_URL = "https://0rmd1cx2nc.execute-api.us-east-1.amazonaws.com/dashboard";
+  const REFRESH_MS = 10000;
+
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return "";
+    return String(str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;");
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return "-";
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, { hour12: false });
+  }
+
+  function renderSummary(summary) {
+    const tiles = [
+      { label: "Total Alerts", value: summary.total_alerts, cls: "" },
+      { label: "Open Alerts", value: summary.open_alerts, cls: summary.open_alerts > 0 ? "warning" : "" },
+      { label: "High Severity Open", value: summary.high_severity_open, cls: summary.high_severity_open > 0 ? "critical" : "" },
+      { label: "Open Work Orders", value: summary.open_work_orders, cls: summary.open_work_orders > 0 ? "warning" : "" },
+    ];
+    document.getElementById("summary-grid").innerHTML = tiles.map(t => `
+      <div class="stat-tile ${t.cls}">
+        <div class="label">${t.label}</div>
+        <div class="value">${t.value}</div>
+      </div>
+    `).join("");
+  }
+
+  function renderMachines(machines) {
+    if (!machines.length) {
+      document.getElementById("machines-grid").innerHTML = `<div style="color:var(--muted)">No machines reporting yet.</div>`;
+      return;
+    }
+    document.getElementById("machines-grid").innerHTML = machines.map(m => `
+      <div class="machine-card ${m.status}">
+        <div class="machine-id">${escapeHtml(m.machine_id)}</div>
+        <div class="status-pill ${m.status}">${m.status}</div>
+        <div class="detail">${m.open_alert_count} open alert(s)</div>
+        <div class="detail">${m.latest_alert ? escapeHtml(m.latest_alert.description) : "No recent alerts"}</div>
+      </div>
+    `).join("");
+  }
+
+  function renderAlerts(alerts) {
+    document.getElementById("alerts-body").innerHTML = alerts.map(a => `
+      <tr>
+        <td>${fmtTime(a.created_at)}</td>
+        <td>${escapeHtml(a.machine_id)}</td>
+        <td class="sev-${a.severity}">${escapeHtml(a.severity)}</td>
+        <td>${escapeHtml(a.description)}</td>
+        <td>${escapeHtml(a.status)}</td>
+      </tr>
+    `).join("");
+  }
+
+  function renderWorkOrders(workOrders) {
+    document.getElementById("workorders-body").innerHTML = workOrders.map(w => `
+      <tr>
+        <td>${fmtTime(w.created_at)}</td>
+        <td>${escapeHtml(w.machine_id)}</td>
+        <td>${escapeHtml(w.sensor_type)}</td>
+        <td>${escapeHtml(w.reason)}</td>
+        <td>${escapeHtml(w.assigned_to)}</td>
+        <td>${escapeHtml(w.status)}</td>
+      </tr>
+    `).join("");
+  }
+
+  async function loadDashboard() {
+    try {
+      const res = await fetch(API_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      document.getElementById("error-banner").style.display = "none";
+      renderSummary(data.summary);
+      renderMachines(data.machines);
+      renderAlerts(data.alerts);
+      renderWorkOrders(data.workOrders);
+      document.getElementById("last-updated").textContent =
+        "Last updated: " + new Date().toLocaleTimeString(undefined, { hour12: false });
+    } catch (err) {
+      const banner = document.getElementById("error-banner");
+      banner.style.display = "block";
+      banner.textContent = "Failed to load dashboard data: " + err.message;
+      console.error(err);
+    }
+  }
+
+  loadDashboard();
+  setInterval(loadDashboard, REFRESH_MS);
+</script>
+
+</body>
+</html>
